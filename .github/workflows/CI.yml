@@ -19,6 +19,13 @@ permissions:
   contents: read
 
 jobs:
+  rust-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+      - run: bash scripts/check-rust-only.sh
+
   linux:
     runs-on: ${{ matrix.platform.runner }}
     strategy:

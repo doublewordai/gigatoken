@@ -21,6 +21,17 @@ See the [Benchmarks](#benchmarks) section for detailed throughput numbers across
 pip install gigatoken
 ```
 
+For a Rust-only build without the Python bindings or runtime dependency, disable
+the default features:
+
+```toml
+[dependencies]
+gigatoken = { git = "https://github.com/marcelroed/gigatoken", default-features = false }
+```
+
+The default `python` feature remains enabled for Python packages and extension
+module builds.
+
 ## Usage
 Gigatoken can be used with its own API, or in compatibility mode with HuggingFace Tokenizers or Tiktoken.
 
