@@ -67,7 +67,9 @@ impl BPETokenizer {
         let scheme = pretokenizer_scheme(pretokenizer)?;
         let special_tokens = special_tokens.unwrap_or_default().into_iter().collect();
         Ok(Self {
-            tokenizer: load_tokenizer::tiktoken::load_tiktoken(&path, scheme, special_tokens)?,
+            tokenizer: bindings::cache::apply_max_cache_bytes(
+                load_tokenizer::tiktoken::load_tiktoken(&path, scheme, special_tokens)?,
+            ),
             workers: WorkerPool::new(),
         })
     }
@@ -75,7 +77,9 @@ impl BPETokenizer {
     #[staticmethod]
     fn from_hf(path: PathBuf) -> PyResult<Self> {
         Ok(Self {
-            tokenizer: load_tokenizer::hf::load_hf_bpe(&path)?,
+            tokenizer: bindings::cache::apply_max_cache_bytes(load_tokenizer::hf::load_hf_bpe(
+                &path,
+            )?),
             workers: WorkerPool::new(),
         })
     }
@@ -154,9 +158,13 @@ impl BPETokenizer {
         options: Py<bindings::bridge::WrapTruncate>,
         parallel: bool,
     ) -> PyResult<Bound<'py, PyList>> {
-        encode_batch_pylist(py, &inputs, Some(options.get()), parallel, |docs, format| {
-            Ok(self.encode_regions_ragged(docs, format, parallel))
-        })
+        encode_batch_pylist(
+            py,
+            &inputs,
+            Some(options.get()),
+            parallel,
+            |docs, format| Ok(self.encode_regions_ragged(docs, format, parallel)),
+        )
     }
 
     /// encode_batch assembled into one padded/truncated (rows x width)
@@ -237,6 +245,14 @@ impl BPETokenizer {
         Ok(self.tokenizer.decode(ids.as_slice()?).collect())
     }
 
+    /// Cached pretoken entries on the single-document `encode` path's
+    /// tokenizer (batch workers keep their own caches): grows as text is
+    /// encoded, drops back toward vocab-seed level when a budgeted cache
+    /// wipes (see gigatoken.set_max_cache_bytes).
+    fn cache_entries(&self) -> usize {
+        self.tokenizer.cache_entries()
+    }
+
     fn __repr__(&self) -> PyResult<String> {
         Ok(format!("{:?}", self.tokenizer))
     }
@@ -288,7 +304,9 @@ impl SentencePieceTokenizer {
                 // conversion inside sp_encode_files_docs. This one
                 // constant-time argument check stays even though document
                 // bytes are trusted.
-                if let DocFormat::Text { separator: Some(sep) } = format
+                if let DocFormat::Text {
+                    separator: Some(sep),
+                } = format
                     && std::str::from_utf8(sep).is_err()
                 {
                     return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -303,16 +321,23 @@ impl SentencePieceTokenizer {
             }
         })
     }
+
+    /// Wrap a loaded model, applying the global cache budget to it and to
+    /// the single-document encode state.
+    fn with_model(model: bpe::SentencePieceBPE) -> Self {
+        let tokenizer = bindings::cache::apply_max_cache_bytes_sp(model);
+        let state = bpe::sentencepiece::EncodeState::with_budget(tokenizer.max_cache_bytes());
+        Self { tokenizer, state }
+    }
 }
 
 #[pymethods]
 impl SentencePieceTokenizer {
     #[staticmethod]
     fn from_hf(path: PathBuf) -> PyResult<Self> {
-        Ok(Self {
-            tokenizer: load_tokenizer::hf::load_hf_sentencepiece(&path)?,
-            state: bpe::sentencepiece::EncodeState::new(),
-        })
+        Ok(Self::with_model(load_tokenizer::hf::load_hf_sentencepiece(
+            &path,
+        )?))
     }
 
     /// Encode a batch of documents in parallel, releasing the GIL. Accepts
@@ -356,9 +381,13 @@ impl SentencePieceTokenizer {
         options: Py<bindings::bridge::WrapTruncate>,
         parallel: bool,
     ) -> PyResult<Bound<'py, PyList>> {
-        encode_batch_pylist(py, &inputs, Some(options.get()), parallel, |docs, format| {
-            self.encode_regions_ragged(docs, format, parallel)
-        })
+        encode_batch_pylist(
+            py,
+            &inputs,
+            Some(options.get()),
+            parallel,
+            |docs, format| self.encode_regions_ragged(docs, format, parallel),
+        )
     }
 
     /// See BPETokenizer.encode_batch_padded: the same padded-matrix batch
@@ -460,6 +489,12 @@ impl SentencePieceTokenizer {
         Ok(self.tokenizer.decode(ids.as_slice()?))
     }
 
+    /// Cached unit entries on the single-document `encode` path's state
+    /// (batch encoders are per-call); see `BPETokenizer.cache_entries`.
+    fn cache_entries(&self) -> usize {
+        self.state.cache_size()
+    }
+
     fn __repr__(&self) -> PyResult<String> {
         Ok(format!("{:?}", self.tokenizer))
     }
@@ -489,19 +524,14 @@ fn load_hf_json(py: Python<'_>, data: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         load_tokenizer::hf::HfTokenizer::Bpe(tokenizer) => Ok(Py::new(
             py,
             BPETokenizer {
-                tokenizer,
+                tokenizer: bindings::cache::apply_max_cache_bytes(tokenizer),
                 workers: WorkerPool::new(),
             },
         )?
         .into_any()),
-        load_tokenizer::hf::HfTokenizer::SentencePiece(tokenizer) => Ok(Py::new(
-            py,
-            SentencePieceTokenizer {
-                tokenizer,
-                state: bpe::sentencepiece::EncodeState::new(),
-            },
-        )?
-        .into_any()),
+        load_tokenizer::hf::HfTokenizer::SentencePiece(tokenizer) => {
+            Ok(Py::new(py, SentencePieceTokenizer::with_model(tokenizer))?.into_any())
+        }
     }
 }
 
@@ -530,5 +560,7 @@ fn gigatoken_rs<'py>(py: Python, m: &Bound<'py, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(bindings::hub::hub_file, m)?)?;
     m.add_function(wrap_pyfunction!(bindings::hub::looks_like_repo_id, m)?)?;
     m.add_function(wrap_pyfunction!(bindings::hub::get_hf_token, m)?)?;
+    m.add_function(wrap_pyfunction!(bindings::cache::set_max_cache_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(bindings::cache::get_max_cache_bytes, m)?)?;
     Ok(())
 }

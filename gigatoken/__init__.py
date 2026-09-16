@@ -4,7 +4,9 @@ from gigatoken.gigatoken_rs import (
     JsonlFileSource,
     ParquetFileSource,
     TextFileSource,
+    get_max_cache_bytes,
     pretokenizer,
+    set_max_cache_bytes,
     train_bpe,
 )
 
@@ -21,6 +23,8 @@ __all__ = [
     "TextFileSource",
     "TiktokenCompat",
     "Tokenizer",
+    "get_max_cache_bytes",
     "pretokenizer",
+    "set_max_cache_bytes",
     "train_bpe",
 ]
