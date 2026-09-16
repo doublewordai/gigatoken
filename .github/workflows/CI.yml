@@ -19,6 +19,21 @@ permissions:
   contents: read
 
 jobs:
+  rust-core:
+    runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: nightly-2026-07-21
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-07-21
+      - run: bash scripts/check-rust-only.sh
+      - name: Verify cache recycling and default budgets
+        run: |
+          cargo test --locked --no-default-features bpe::tiktoken::tests::budgeted_
+          cargo test --locked --no-default-features bpe::tiktoken::tests::default_budget_lifecycle
+
   linux:
     runs-on: ${{ matrix.platform.runner }}
     strategy:
