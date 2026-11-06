@@ -22,21 +22,25 @@ jobs:
   linux:
     runs-on: ${{ matrix.platform.runner }}
     strategy:
+      fail-fast: false
       matrix:
         platform:
           - runner: ubuntu-22.04
             target: x86_64
           - runner: ubuntu-22.04
             target: x86
-          - runner: ubuntu-22.04
+          - runner: ubuntu-24.04-arm
             target: aarch64
           - runner: ubuntu-22.04
             target: armv7
           - runner: ubuntu-22.04
-            target: s390x
-          - runner: ubuntu-22.04
             target: ppc64le
+            container: quay.io/pypa/manylinux2014_ppc64le:latest
     steps:
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.platform.target == 'ppc64le'
+        with:
+          platforms: ppc64le
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
@@ -46,8 +50,16 @@ jobs:
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
-          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
-          manylinux: auto
+          sccache: ${{ matrix.platform.target != 'ppc64le' && !startsWith(github.ref, 'refs/tags/') }}
+          manylinux: "2014"
+          container: ${{ matrix.platform.container }}
+          before-script-linux: |
+            if [ "${{ matrix.platform.target }}" = armv7 ]; then
+              apt-get update
+              apt-get install -y --no-install-recommends clang
+              export CC_armv7_unknown_linux_gnueabihf="clang --target=armv7-unknown-linux-gnueabihf --sysroot=$TARGET_SYSROOT --gcc-toolchain=/usr/armv7-unknown-linux-gnueabihf"
+              export CXX_armv7_unknown_linux_gnueabihf="clang++ --target=armv7-unknown-linux-gnueabihf --sysroot=$TARGET_SYSROOT --gcc-toolchain=/usr/armv7-unknown-linux-gnueabihf"
+            fi
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -117,9 +129,9 @@ jobs:
     strategy:
       matrix:
         platform:
-          - runner: macos-13
+          - runner: macos-15-intel
             target: x86_64
-          - runner: macos-14
+          - runner: macos-15
             target: aarch64
     steps:
       - uses: actions/checkout@v4

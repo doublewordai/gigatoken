@@ -13,6 +13,10 @@ use crate::token::TokenId;
 use eyre::{Context, Result, ensure};
 use rustc_hash::FxBuildHasher;
 use serde::Deserialize;
+#[cfg(target_arch = "x86")]
+use serde_json as json;
+#[cfg(not(target_arch = "x86"))]
+use sonic_rs as json;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -227,7 +231,7 @@ struct ModelTypeOnly {
 }
 
 fn parse_tokenizer_json(data: &[u8]) -> Result<TokenizerJson> {
-    if let Ok(ModelTypeProbe { model: Some(m) }) = sonic_rs::from_slice::<ModelTypeProbe>(data) {
+    if let Ok(ModelTypeProbe { model: Some(m) }) = json::from_slice::<ModelTypeProbe>(data) {
         let family = match m.model_type.as_deref() {
             Some("BPE") => None,
             Some(other) => Some(other.to_string()),
@@ -247,7 +251,7 @@ fn parse_tokenizer_json(data: &[u8]) -> Result<TokenizerJson> {
     // Inline the deserializer's own message (offending field, position,
     // snippet): the first line is often all that surfaces in test summaries
     // and short tracebacks.
-    sonic_rs::from_slice(data).map_err(|e| eyre::eyre!("Failed to parse tokenizer JSON: {e}"))
+    json::from_slice(data).map_err(|e| eyre::eyre!("Failed to parse tokenizer JSON: {e}"))
 }
 
 fn read_tokenizer_json(path: impl AsRef<Path>) -> Result<TokenizerJson> {
