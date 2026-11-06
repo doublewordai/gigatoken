@@ -1,7 +1,25 @@
 use std::io::BufRead;
 
 use crate::input::Document;
+#[cfg(not(target_arch = "x86"))]
 use sonic_rs::JsonValueTrait;
+
+#[cfg(not(target_arch = "x86"))]
+fn text_document(line: &[u8], field: &str) -> Option<Document<'static>> {
+    let value = sonic_rs::get_from_slice(line, &[field]).ok()?;
+    Some(Document::from(value.as_str()?.as_bytes().to_vec()))
+}
+
+#[cfg(target_arch = "x86")]
+use portable_text_document as text_document;
+
+#[cfg(any(target_arch = "x86", test))]
+fn portable_text_document(line: &[u8], field: &str) -> Option<Document<'static>> {
+    let parsed: serde_json::Value = serde_json::from_slice(line).ok()?;
+    Some(Document::from(
+        parsed.get(field)?.as_str()?.as_bytes().to_vec(),
+    ))
+}
 
 /// Zero-copy JSONL iterator over a byte slice (e.g. from mmap).
 /// Used for parallel chunking of uncompressed JSONL files.
@@ -44,9 +62,7 @@ impl<'a> Iterator for JsonLinesSlice<'a> {
                 continue;
             }
 
-            let value = sonic_rs::get_from_slice(line, &[self.field]).ok()?;
-            let text = value.as_str()?;
-            return Some(Document::from(text.as_bytes().to_vec()));
+            return text_document(line, self.field);
         }
     }
 }
@@ -86,9 +102,51 @@ impl<R: BufRead> Iterator for JsonLinesReader<R> {
                 continue;
             }
 
-            let value = sonic_rs::get_from_slice(line, &[self.field.as_str()]).ok()?;
-            let text = value.as_str()?;
-            return Some(Document::from(text.as_bytes().to_vec()));
+            return text_document(line, &self.field);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn readers_decode_escaped_strings_and_unicode() {
+        let data = b"{\"text\":\"hello\\n\\u03bb\"}\n{\"text\":\"next\"}";
+        let sliced: Vec<_> = JsonLinesSlice::new(data, "text")
+            .map(|d| d.as_ref().to_vec())
+            .collect();
+        let streamed: Vec<_> = JsonLinesReader::new(&data[..], "text")
+            .map(|d| d.as_ref().to_vec())
+            .collect();
+        assert_eq!(
+            sliced,
+            vec!["hello\nλ".as_bytes().to_vec(), b"next".to_vec()]
+        );
+        assert_eq!(streamed, sliced);
+    }
+
+    #[test]
+    fn portable_parser_matches_simd_for_text_fields() {
+        for line in [
+            br#"{"text":"hello\n\u03bb"}"#.as_slice(),
+            br#"{"text":"next"}"#,
+            br#"{"other":"value"}"#,
+            br#"{"text":42}"#,
+            b"invalid",
+        ] {
+            assert_eq!(
+                portable_text_document(line, "text").map(|d| d.as_ref().to_vec()),
+                text_document(line, "text").map(|d| d.as_ref().to_vec()),
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_missing_and_non_string_fields() {
+        assert!(text_document(br#"{"other":"value"}"#, "text").is_none());
+        assert!(text_document(br#"{"text":42}"#, "text").is_none());
+        assert!(text_document(b"invalid", "text").is_none());
     }
 }
