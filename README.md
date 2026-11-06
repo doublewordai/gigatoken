@@ -21,6 +21,17 @@ See the [Benchmarks](#benchmarks) section for detailed throughput numbers across
 pip install gigatoken
 ```
 
+For a Rust-only build without the Python bindings or runtime dependency, disable
+the default features:
+
+```toml
+[dependencies]
+gigatoken = { git = "https://github.com/marcelroed/gigatoken", default-features = false }
+```
+
+The default `python` feature remains enabled for Python packages and extension
+module builds.
+
 ## Usage
 Gigatoken can be used with its own API, or in compatibility mode with HuggingFace Tokenizers or Tiktoken.
 
@@ -268,6 +279,7 @@ If you use Gigatoken in your research, please cite it as:
 * WordPiece is not yet supported.
 * SentencePiece-based tokenization is not nearly as optimized as the more common BPE tokenizers. This is low priority for now since mostly Google models/BERT style models use SentencePiece.
 * Windows has not been tested much, so for now prefer using WSL.
+* CJK-heavy data is much slower to tokenize. Most pretokenizers make caching a challenge in this setting. There is an ongoing effort to improve this.
 
 ---
 
