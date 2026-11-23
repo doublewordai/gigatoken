@@ -23,7 +23,6 @@ memmap2 = { version = "0.9", features = ["stable_deref_trait"] }
 base64 = "0.22"
 icu = { version = "2.2", features = ["compiled_data", "datagen"] }
 eyre = "0.6.12"
-sonic-rs = "0.5.8"
 memchr = "2.8.0"
 aho-corasick = "1.1"
 serde = { version = "1.0.228", features = ["derive"] }
@@ -44,6 +43,13 @@ parquet = { version = "59.1.0", default-features = false, features = [
 arrow-array = "59"
 arrow-schema = "59"
 ureq = { version = "3.3.0", default-features = false, features = ["rustls"] }
+
+# sonic-rs currently requires 64-bit x86 intrinsics on x86 targets.
+[target.'cfg(not(target_arch = "x86"))'.dependencies]
+sonic-rs = "0.5.8"
+
+[target.'cfg(target_arch = "x86")'.dependencies]
+serde_json = "1"
 
 # madvise/prctl on Linux (pretoken cache table, batch gather, bench THP
 # setup); already in the tree transitively via memmap2/pyo3.
@@ -79,6 +85,7 @@ debug = 2
 strip = "none"
 
 [dev-dependencies]
+serde_json = "1"
 criterion = "0.8"
 fancy-regex = "0.18.0"
 rand = "0.10"
